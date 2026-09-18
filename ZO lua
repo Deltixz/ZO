@@ -1,0 +1,189 @@
+-- Tornado Script by Grok for Brookhaven (Delta)
+-- Управление: нажми клавишу "T" чтобы создать/удалить торнадо
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Debris = game:GetService("Debris")
+
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+
+local TornadoActive = false
+local TornadoModel = nil
+local TornadoPart = nil
+local Connection = nil
+
+-- Настройки торнадо
+local CONFIG = {
+    Height = 80,
+    BaseRadius = 12,
+    TopRadius = 35,
+    Speed = 18,           -- скорость движения
+    SpinSpeed = 12,       -- скорость вращения
+    PullStrength = 45,    -- сила притяжения
+    LiftStrength = 35,    -- сила подъёма
+    Range = 55,           -- радиус действия
+    Lifetime = 45         -- сколько секунд живёт (0 = бесконечно)
+}
+
+local function CreateTornado()
+    if TornadoActive then return end
+    TornadoActive = true
+
+    TornadoModel = Instance.new("Model")
+    TornadoModel.Name = "GrokTornado"
+    TornadoModel.Parent = workspace
+
+    -- Основная часть торнадо
+    TornadoPart = Instance.new("Part")
+    TornadoPart.Name = "TornadoCore"
+    TornadoPart.Anchored = true
+    TornadoPart.CanCollide = false
+    TornadoPart.Transparency = 0.4
+    TornadoPart.Material = Enum.Material.ForceField
+    TornadoPart.Color = Color3.fromRGB(160, 160, 180)
+    TornadoPart.Size = Vector3.new(CONFIG.BaseRadius * 2, CONFIG.Height, CONFIG.BaseRadius * 2)
+    TornadoPart.CFrame = HumanoidRootPart.CFrame * CFrame.new(0, CONFIG.Height / 2, -25)
+    TornadoPart.Parent = TornadoModel
+
+    -- Меш (конус)
+    local mesh = Instance.new("SpecialMesh")
+    mesh.MeshType = Enum.MeshType.FileMesh
+    mesh.MeshId = "rbxassetid://1290033" -- конус
+    mesh.Scale = Vector3.new(CONFIG.BaseRadius * 1.8, CONFIG.Height / 4, CONFIG.BaseRadius * 1.8)
+    mesh.Parent = TornadoPart
+
+    -- Частицы (пыль + ветер)
+    local attachment = Instance.new("Attachment")
+    attachment.Parent = TornadoPart
+
+    local particles = Instance.new("ParticleEmitter")
+    particles.Texture = "rbxassetid://243660364"
+    particles.Rate = 180
+    particles.Lifetime = NumberRange.new(1.2, 2.4)
+    particles.Speed = NumberRange.new(8, 22)
+    particles.SpreadAngle = Vector2.new(180, 180)
+    particles.Rotation = NumberRange.new(0, 360)
+    particles.RotSpeed = NumberRange.new(-90, 90)
+    particles.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 4),
+        NumberSequenceKeypoint.new(0.5, 8),
+        NumberSequenceKeypoint.new(1, 2)
+    })
+    particles.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.3),
+        NumberSequenceKeypoint.new(0.7, 0.6),
+        NumberSequenceKeypoint.new(1, 1)
+    })
+    particles.Color = ColorSequence.new(Color3.fromRGB(180, 180, 190))
+    particles.Parent = attachment
+
+    -- Звук ветра
+    local sound = Instance.new("Sound")
+    sound.SoundId = "rbxassetid://156285439"
+    sound.Volume = 1.8
+    sound.Looped = true
+    sound.Parent = TornadoPart
+    sound:Play()
+
+    -- Движение и физика
+    local angle = 0
+    local direction = Vector3.new(1, 0, 0.3).Unit
+    local startTime = tick()
+
+    Connection = RunService.Heartbeat:Connect(function(dt)
+        if not TornadoPart or not TornadoPart.Parent then
+            DestroyTornado()
+            return
+        end
+
+        -- Вращение
+        angle = angle + CONFIG.SpinSpeed * dt
+        TornadoPart.CFrame = TornadoPart.CFrame * CFrame.Angles(0, math.rad(CONFIG.SpinSpeed * 3), 0)
+
+        -- Движение вперёд
+        local move = direction * CONFIG.Speed * dt
+        TornadoPart.CFrame = TornadoPart.CFrame + move
+
+        -- Иногда меняем направление
+        if math.random() < 0.008 then
+            direction = (direction + Vector3.new(math.random(-10,10)/10, 0, math.random(-10,10)/10)).Unit
+        end
+-- Притягиваем объекты и игроков
+        local tornadoPos = TornadoPart.Position
+
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and not obj.Anchored and obj ~= TornadoPart then
+                local dist = (obj.Position - tornadoPos).Magnitude
+                if dist < CONFIG.Range then
+                    local directionToCenter = (tornadoPos - obj.Position).Unit
+                    local force = directionToCenter * CONFIG.PullStrength
+                    local lift = Vector3.new(0, CONFIG.LiftStrength * (1 - dist / CONFIG.Range), 0)
+
+                    -- Добавляем скорость (клиентская симуляция)
+                    obj.AssemblyLinearVelocity = obj.AssemblyLinearVelocity + (force + lift) * dt * 2
+
+                    -- Вращение
+                    obj.AssemblyAngularVelocity = obj.AssemblyAngularVelocity + Vector3.new(0, 8, 0) * dt
+                end
+            end
+        end
+
+        -- Притягиваем других игроков
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                local hrp = player.Character.HumanoidRootPart
+                local dist = (hrp.Position - tornadoPos).Magnitude
+                if dist < CONFIG.Range then
+                    local directionToCenter = (tornadoPos - hrp.Position).Unit
+                    hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity + directionToCenter * CONFIG.PullStrength * 1.5 * dt
+                    hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity + Vector3.new(0, CONFIG.LiftStrength * 0.8, 0) * dt
+                end
+            end
+        end
+
+        -- Автоматическое удаление
+        if CONFIG.Lifetime > 0 and tick() - startTime > CONFIG.Lifetime then
+            DestroyTornado()
+        end
+    end)
+
+    print("Торнадо создано! Нажми T чтобы убрать.")
+end
+
+local function DestroyTornado()
+    TornadoActive = false
+    if Connection then
+        Connection:Disconnect()
+        Connection = nil
+    end
+    if TornadoModel then
+        TornadoModel:Destroy()
+        TornadoModel = nil
+        TornadoPart = nil
+    end
+    print("Торнадо удалено.")
+end
+
+-- Клавиша T
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.T then
+        if TornadoActive then
+            DestroyTornado()
+        else
+            CreateTornado()
+        end
+    end
+end)
+
+-- На всякий случай при смерти
+LocalPlayer.CharacterAdded:Connect(function()
+    if TornadoActive then
+        DestroyTornado()
+    end
+end)
+
+print("Скрипт торнадо загружен! Нажми клавишу [T] чтобы призвать/убрать торнадо.")
